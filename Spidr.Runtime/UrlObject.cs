@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using log4net;
+using Newtonsoft.Json;
 
 namespace Spidr.Runtime
 {
@@ -64,24 +65,34 @@ namespace Spidr.Runtime
 
         public string GetFullPath(bool queryParams)
         {
-            if (Valid)
+            try
             {
-                if (!Relative)
+                // test: log.Info(JsonConvert.SerializeObject(this, Formatting.Indented));
+                if (Valid)
                 {
-                    return (Protocol != null ? Protocol + "://" : "") + (IsWWWAddress ? "www." : string.Empty)
-                        + (DomainPrefix != null ? (DomainPrefix.Aggregate("", (x, y) => x + (y != null ? y + "." : ""))) : "")
-                        + (DomainName != null ? DomainName : "")
-                        + (DomainSuffix != null ? (DomainSuffix.Aggregate("", (x, y) => x + (y != null ? "." + y : ""))) : "")
-                        + (Path != null ? Path.Aggregate("", (x, y) => x + (y != null ? "/" + y : "")) : "");
+                    if (!Relative)
+                    {
+                        return (Protocol != null ? Protocol + "://" : "") + (IsWWWAddress ? "www." : string.Empty)
+                            + (DomainPrefix != null ? (DomainPrefix.Aggregate("", (x, y) => x + (y != null ? y + "." : ""))) : "")
+                            + (DomainName != null ? DomainName : "")
+                            + (DomainSuffix != null ? (DomainSuffix.Aggregate("", (x, y) => x + (y != null ? "." + y : ""))) : "")
+                            + (Path != null ? Path.Aggregate("", (x, y) => x + (y != null ? "/" + y : "")) : "");
+                    }
+                    else
+                    {
+                        return (Path != null ? Path.Aggregate("", (x, y) => x + "/" + y) : "");
+                    }
                 }
                 else
                 {
-                    return (Path != null ? Path.Aggregate("", (x, y) => x + "/" + y) : "");
+                    return OptContent;
                 }
             }
-            else
+            catch (Exception e)
             {
-                return OptContent;
+                log.Warn(e);
+                log.Info(JsonConvert.SerializeObject(this, Formatting.Indented));
+                return string.Empty;
             }
         }
 
@@ -177,27 +188,31 @@ namespace Spidr.Runtime
         {
             try
             {
-                string nonProtocolValue = urlValue.Split(new string[] { "://", "/" }, StringSplitOptions.None)[2];
-                string[] slashDelimitedPath = nonProtocolValue.Split(new string[] { "/" }, StringSplitOptions.None);
+                string nonProtocolValue = urlValue.Split(new string[] { "://" }, StringSplitOptions.None)[1];
+                string[] slashDelimitedPath = nonProtocolValue.Split(new string[] { "/" }, StringSplitOptions.None).Skip(1).ToArray();
                 Dictionary<string, string> queryParams = new Dictionary<string, string>();
-                if (slashDelimitedPath[slashDelimitedPath.Length - 1].Split('?').Count() > 1)
+                if (slashDelimitedPath.Length > 0)
                 {
-                    var queryString = slashDelimitedPath[slashDelimitedPath.Length - 1] = slashDelimitedPath[slashDelimitedPath.Length - 1].Split('?')[1];
-                    var splitParams = queryString.Split('&');
-                    foreach (var splitParam in splitParams)
+                    if (slashDelimitedPath[slashDelimitedPath.Length - 1].Split('?').Count() > 1)
                     {
-                        var keyValuePair = splitParam.Split('=');
-                        if (keyValuePair.Count() == 2)
+                        var queryString = slashDelimitedPath[slashDelimitedPath.Length - 1] = slashDelimitedPath[slashDelimitedPath.Length - 1].Split('?')[1];
+                        var splitParams = queryString.Split('&');
+                        foreach (var splitParam in splitParams)
                         {
-                            queryParams.Add(keyValuePair[0], keyValuePair[1]);
+                            var keyValuePair = splitParam.Split('=');
+                            if (keyValuePair.Count() == 2)
+                            {
+                                queryParams.Add(keyValuePair[0], keyValuePair[1]);
+                            }
                         }
                     }
                 }
                 return queryParams;
             }
-            catch (Exception e)
+            catch (Exception /*e*/)
             {
-                log.Warn(e);
+                // simply is not all that important
+                // log.Warn(e);
                 // throw;
                 return new Dictionary<string, string>();
             }

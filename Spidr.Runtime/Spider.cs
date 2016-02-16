@@ -11,6 +11,8 @@ using HtmlAgilityPack;
 using log4net;
 using Newtonsoft.Json;
 using System.Threading;
+using System.Security.Cryptography.X509Certificates;
+using System.Net.Security;
 
 namespace Spidr.Runtime
 {
@@ -21,6 +23,7 @@ namespace Spidr.Runtime
         public int MaxAllowedPages { get; private set; }
         public int MaxAllowedTasks { get; private set; }
         public string UserAgent { get; private set; }
+        public bool OnDomainPagesOnly { get; private set; }
 
         // spider drivers
         public List<Page> Visited { get; private set; }
@@ -41,12 +44,13 @@ namespace Spidr.Runtime
 
         private static readonly ILog log = LogManager.GetLogger(typeof(Spider));
 
-        public Spider(string Frontier, int MaxAllowedPages = 1000, int MaxAllowedTasks = 3)
+        public Spider(string Frontier, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
         {
             this.Frontier = Frontier;
             this.MaxAllowedPages = MaxAllowedPages;
             this.MaxAllowedTasks = MaxAllowedTasks;
             this.UserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
+            this.OnDomainPagesOnly = OnDomainPagesOnly;
             this.Unvisited = new List<UrlObject>();
             this.Visited = new List<Page>();
             this.SpiderTasks = new Stack<Task<Page>>();
@@ -54,6 +58,15 @@ namespace Spidr.Runtime
 
         public void Start()
         {
+            // ignore ssl errors
+            ServicePointManager.ServerCertificateValidationCallback = delegate (
+            Object obj, X509Certificate certificate, X509Chain chain,
+            SslPolicyErrors errors)
+            {
+                return (true);
+            };
+
+            // start
             UrlObject starter = UrlObject.FromString(Frontier);
             if (Unvisited.Count() == 0)
             {
@@ -157,7 +170,7 @@ namespace Spidr.Runtime
                 Client.Headers.Add("user-agent", this.UserAgent);
                 Client.Encoding = System.Text.Encoding.UTF8;
                 */
-                string pageContent = StringFromAddress(fullPath);
+                string pageContent = StringFromAddress(fullPath); // Client.DownloadString yada yada yada...
 
                 string title = GetTitle(pageContent);
                 List<LinkTag> links = GetLinks(address.AssociatedPage, fullPath, pageContent);
