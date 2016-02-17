@@ -26,8 +26,8 @@ namespace Spidr.Runtime
         public bool OnDomainPagesOnly { get; private set; }
 
         // spider drivers
-        public List<Page> Visited { get; private set; }
-        public List<UrlObject> Unvisited { get; private set; }
+        public Dictionary<string, Page> Visited { get; private set; }
+        public Dictionary<string, UrlObject> Unvisited { get; private set; }
 
         // spider tasks
         public Stack<Task<Page>> SpiderTasks { get; private set; }
@@ -51,8 +51,8 @@ namespace Spidr.Runtime
             this.MaxAllowedTasks = MaxAllowedTasks;
             this.UserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
             this.OnDomainPagesOnly = OnDomainPagesOnly;
-            this.Unvisited = new List<UrlObject>();
-            this.Visited = new List<Page>();
+            this.Unvisited = new Dictionary<string, UrlObject>();
+            this.Visited = new Dictionary<string, Page>();
             this.SpiderTasks = new Stack<Task<Page>>();
         }
 
@@ -70,18 +70,18 @@ namespace Spidr.Runtime
             UrlObject starter = UrlObject.FromString(Frontier);
             if (Unvisited.Count() == 0)
             {
-                Unvisited.Add(starter);
+                Unvisited.Add(starter.GetFullPath(false), starter);
             }
 
             while (Unvisited.Count() > 0
                 && Visited.Count() < MaxAllowedPages)
             {
-                for (var i = 0; i < MaxAllowedTasks; i++)
+                for (var i = 0; i < MaxAllowedTasks - 1; i++)
                 {
                     if (i < Unvisited.Count())
                     {
                         var ctr = i;
-                        SpiderTasks.Push(Task.Factory.StartNew(() => PageFromUrl(Unvisited[ctr])));
+                        SpiderTasks.Push(Task.Factory.StartNew(() => PageFromUrl(Unvisited.ElementAt(ctr).Value)));
                     }
                 }
 
@@ -92,32 +92,31 @@ namespace Spidr.Runtime
                     if (p != null)
                     {
                         Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
-                        Visited.Add(p);
-                        Unvisited.RemoveAll(x => x.AssociatedPage == p.PageId);
+                        Visited.Add(p.Link.GetFullPath(false), p);
+                        Unvisited.Remove(p.Link.GetFullPath(false));
+                        // .RemoveAll(x => x.AssociatedPage == p.PageId);
                         foreach (LinkTag l in p.LinkTags)
                         {
                             bool toBeVisited = false;
                             bool visited = false;
-                            foreach (UrlObject url in Unvisited)
+                            try
                             {
-                                if (url == l.Url)
-                                {
-                                    toBeVisited = true;
-                                }
+                                var key = Unvisited[l.Url.GetFullPath(false)];
+                                toBeVisited = true;
                             }
+                            catch (KeyNotFoundException /* knfe */) { }
 
-                            foreach (Page page in Visited)
+                            try
                             {
-                                if (page.Link == l.Url)
-                                {
-                                    visited = true;
-                                }
+                                var key = Visited[l.Url.GetFullPath(false)];
+                                visited = true;
                             }
+                            catch (KeyNotFoundException /* knfe */) { }
 
                             if (toBeVisited != true && visited != true)
                             {
                                 if (l.Url.GetDomain() == starter.GetDomain())
-                                    Unvisited.Add(l.Url);
+                                    Unvisited.Add(l.Url.GetFullPath(false), l.Url);
                             }
                         }
                     }
@@ -125,12 +124,12 @@ namespace Spidr.Runtime
                 }
 
                 MySqlPersistence g = new MySqlPersistence();
-                foreach (Page page in Visited)
+                foreach (KeyValuePair<string, Page> page in Visited)
                 {
-                    if (page.Processed == false)
+                    if (page.Value.Processed == false)
                     {
-                        g.PersistData(page);
-                        page.Processed = true;
+                        g.PersistData(page.Value);
+                        page.Value.Processed = true;
                     }
                 }
             }
