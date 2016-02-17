@@ -17,7 +17,7 @@ namespace Spidr.Console
             log4net.Config.XmlConfigurator.Configure();
             System.Console.WriteLine("Address to process: ");
             string address = System.Console.ReadLine();
-            Spider s = new Spider(address, 1000, true);
+            Spider s = new Spider(address, 1000, true, 50);
             s.Start();
 #if DEBUG
             Thread.Sleep(100000);
