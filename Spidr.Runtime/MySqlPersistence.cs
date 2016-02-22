@@ -45,12 +45,12 @@ namespace Spidr.Runtime
                     }
                     foreach (BinaryFile Image in PageItem.ImageTags)
                     {
-                        InsertBinaryFile(Image);
+                        InsertBinaryFile(Image, "IMAGE");
                         NumberOfCompletedOperations++;
                     }
                     foreach (BinaryFile FileItem in PageItem.FileTags)
                     {
-                        InsertBinaryFile(FileItem);
+                        InsertBinaryFile(FileItem, "FILE");
                         NumberOfCompletedOperations++;
                     }
                 }
@@ -71,7 +71,7 @@ namespace Spidr.Runtime
             }
         }
 
-        public void InsertBinaryFile(BinaryFile f)
+        public void InsertBinaryFile(BinaryFile f, string type)
         {
             string sql = "INSERT INTO FileTable (FileId, PageId, Tag, Path, Filename, TypeDesc, FileContents) "
                 + " VALUES (@FileId, @PageId, @Tag, @Path, @Filename, @TypeDesc, @FileContents);";
@@ -84,7 +84,7 @@ namespace Spidr.Runtime
                     c.Parameters.AddWithValue("@Tag", f.Tag);
                     c.Parameters.AddWithValue("@Path", f.Url.GetFullPath(false));
                     c.Parameters.AddWithValue("@Filename", f.Url.Path.Last());
-                    c.Parameters.AddWithValue("@TypeDesc", "FILE");
+                    c.Parameters.AddWithValue("@TypeDesc", type);
                     f.Contents.Position = 0;
                     c.Parameters.AddWithValue("@FileContents", f.Contents.ToArray());
                     c.ExecuteNonQuery();

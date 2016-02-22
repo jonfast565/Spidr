@@ -8,7 +8,7 @@ namespace Spidr.Runtime
 {
     interface PersistenceInserter
     {
-        void InsertBinaryFile(BinaryFile f);
+        void InsertBinaryFile(BinaryFile f, string type);
         void InsertLink(LinkTag t);
         void InsertPage(Page p);
     }

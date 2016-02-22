@@ -40,6 +40,11 @@ namespace Spidr.Runtime
             "pdf", "xls", "xlsx", "tar.gz", "mp3", "wav", "wma", "svg"
         };
 
+        public static List<string> ValidImgExtensions = new List<string>()
+        {
+            "bmp", "jpg", "gif", "svg", "png", "tif"
+        };
+
         public static List<string> ValidPageExtensions = new List<string>()
         {
             "htm", "html", "asp", "aspx", "php", "xhtml", "asmx", "ashx"
@@ -68,7 +73,8 @@ namespace Spidr.Runtime
                 {
                     lock (VisitedLock)
                     {
-                        foreach (KeyValuePair<string, Page> page in Visited.Where(x => x.Value.Processed == false))
+                        var unprocessed = Visited.Where(x => x.Value.Processed == false);
+                        foreach (KeyValuePair<string, Page> page in unprocessed)
                         {
                             g.PersistData(page.Value);
                             page.Value.Processed = true;
@@ -238,21 +244,36 @@ namespace Spidr.Runtime
                 {
                     HtmlAttribute imgSrcAttribute = image.Attributes["src"];
                     UrlObject urlObject = UrlObject.FromRelativeString(address, imgSrcAttribute.Value.ToString());
-                    try
+                    if (urlObject.Path.LastOrDefault() != null)
                     {
-                        byte[] fileBytes = downloadClient.DownloadData(urlObject.GetFullPath(false));
-                        images.Add(new BinaryFile(pageId)
+                        bool hasValidExtension = false;
+                        foreach (var extension in ValidImgExtensions)
                         {
-                            Url = urlObject,
-                            Tag = image.OuterHtml,
-                            Name = urlObject.Path.LastOrDefault(),
-                            Contents = new MemoryStream(fileBytes),
-                        });
-                        Console.WriteLine("Found image: " + urlObject.GetFullPath(false));
-                    }
-                    catch (WebException wex)
-                    {
-                        log.Warn(wex);
+                            if (urlObject.Path.LastOrDefault().Contains("." + extension))
+                            {
+                                hasValidExtension = true;
+                            }
+                        }
+
+                        if (hasValidExtension)
+                        {
+                            try
+                            {
+                                byte[] fileBytes = downloadClient.DownloadData(urlObject.GetFullPath(false));
+                                images.Add(new BinaryFile(pageId)
+                                {
+                                    Url = urlObject,
+                                    Tag = image.OuterHtml,
+                                    Name = urlObject.Path.LastOrDefault(),
+                                    Contents = new MemoryStream(fileBytes),
+                                });
+                                Console.WriteLine("Found image: " + urlObject.GetFullPath(false));
+                            }
+                            catch (WebException wex)
+                            {
+                                log.Warn(wex);
+                            }
+                        }
                     }
                 }
             }
