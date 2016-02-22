@@ -19,8 +19,9 @@ namespace Spidr.Console
             string address = System.Console.ReadLine();
             Spider s = new Spider(address, 1000, true, 50);
             s.Start();
+            System.Console.WriteLine("Done!");
 #if DEBUG
-            Thread.Sleep(100000);
+            Thread.Sleep(1000);
 #endif
         }
     }

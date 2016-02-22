@@ -73,12 +73,13 @@ namespace Spidr.Runtime
 
         public void InsertBinaryFile(BinaryFile f)
         {
-            string sql = "INSERT INTO FileTable (PageId, Tag, Path, Filename, TypeDesc, FileContents) "
-                + " VALUES (@PageId, @Tag, @Path, @Filename, @TypeDesc, @FileContents);";
+            string sql = "INSERT INTO FileTable (FileId, PageId, Tag, Path, Filename, TypeDesc, FileContents) "
+                + " VALUES (@FileId, @PageId, @Tag, @Path, @Filename, @TypeDesc, @FileContents);";
             try
             {
                 using (MySqlCommand c = new MySqlCommand(sql, client))
                 {
+                    c.Parameters.AddWithValue("@FileId", Guid.NewGuid());
                     c.Parameters.AddWithValue("@PageId", f.PageId.ToString());
                     c.Parameters.AddWithValue("@Tag", f.Tag);
                     c.Parameters.AddWithValue("@Path", f.Url.GetFullPath(false));
@@ -88,6 +89,7 @@ namespace Spidr.Runtime
                     c.Parameters.AddWithValue("@FileContents", f.Contents.ToArray());
                     c.ExecuteNonQuery();
                 }
+                Console.WriteLine("File persisted: " + f.Url.GetFullPath(false));
             }
             catch (Exception e)
             {
@@ -98,16 +100,18 @@ namespace Spidr.Runtime
 
         public void InsertLink(LinkTag t)
         {
-            string sql = "INSERT INTO LinkTable (PageId, Tag, Path) VALUES (@PageId, @Tag, @Path);";
+            string sql = "INSERT INTO LinkTable (LinkId, PageId, Tag, Path) VALUES (@LinkId, @PageId, @Tag, @Path);";
             try
             {
                 using (MySqlCommand c = new MySqlCommand(sql, client))
                 {
+                    c.Parameters.AddWithValue("@LinkId", Guid.NewGuid());
                     c.Parameters.AddWithValue("@PageId", t.PageId.ToString());
                     c.Parameters.AddWithValue("@Tag", t.Tag);
                     c.Parameters.AddWithValue("@Path", t.Url.GetFullPath(false));
                     c.ExecuteNonQuery();
                 }
+                Console.WriteLine("Link persisted: " + t.Url.GetFullPath(false));
             }
             catch (Exception e)
             {
@@ -129,6 +133,7 @@ namespace Spidr.Runtime
                     c.Parameters.AddWithValue("@Content", Utility.GetBytes(p.Content));
                     c.ExecuteNonQuery();
                 }
+                Console.WriteLine("Page persisted: " + p.Link.GetFullPath(false));
             }
             catch (Exception e)
             {

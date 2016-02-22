@@ -28,6 +28,7 @@ namespace Spidr.Runtime
             new List<string> { "co", "nz" }
         };
 
+        public Guid UrlId { get; set; }
         public bool Valid { get; set; }
         public bool Relative { get; set; }
         public string Protocol { get; set; }
@@ -38,7 +39,6 @@ namespace Spidr.Runtime
         public string[] Path { get; set; }
         public Dictionary<string, string> QueryParams { get; set; }
         public string OptContent { get; set; }
-        public Guid AssociatedPage { get; set; }
 
         private static readonly ILog log = LogManager.GetLogger(typeof(UrlObject));
 
@@ -106,6 +106,17 @@ namespace Spidr.Runtime
             return o1.GetFullPath(false) == o2.GetFullPath(false);
         }
 
+        public override bool Equals(Object o1)
+        {
+            UrlObject o1obj = (UrlObject)o1;
+            return o1obj.GetFullPath(false) == this.GetFullPath(false);
+        }
+
+        public override int GetHashCode()
+        {
+            return base.GetHashCode();
+        }
+
         public static UrlObject FromRelativeString(string baseUrl, string relativeUrl)
         {
             string fullUrl = null;
@@ -141,6 +152,7 @@ namespace Spidr.Runtime
                 || urlValue.StartsWith("javascript")
                 || urlValue.StartsWith("mailto"))
             {
+                var guid = Guid.NewGuid();
                 return new UrlObject()
                 {
                     Valid = false,
@@ -149,11 +161,12 @@ namespace Spidr.Runtime
                     Path = ParsePath(urlValue, true),
                     QueryParams = GetQueryParams(urlValue),
                     OptContent = urlValue,
-                    AssociatedPage = Guid.NewGuid()
+                    UrlId = guid
                 };
             }
             else if (urlValue.StartsWith("/"))
             {
+                var guid = Guid.NewGuid();
                 return new UrlObject()
                 {
                     Valid = true,
@@ -162,11 +175,12 @@ namespace Spidr.Runtime
                     Path = ParsePath(urlValue, true),
                     QueryParams = GetQueryParams(urlValue),
                     OptContent = null,
-                    AssociatedPage = Guid.NewGuid()
+                    UrlId = guid
                 };
             }
             else
             {
+                var guid = Guid.NewGuid();
                 return new UrlObject()
                 {
                     Valid = true,
@@ -179,7 +193,7 @@ namespace Spidr.Runtime
                     Path = ParsePath(urlValue, false),
                     QueryParams = GetQueryParams(urlValue),
                     OptContent = null,
-                    AssociatedPage = Guid.NewGuid()
+                    UrlId = guid
                 };
             }
         }

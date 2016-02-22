@@ -7,8 +7,16 @@ drop table LinkTable;
 drop table PageTable;
 */
 
+create table PageTable (
+	PageId varchar(40) not null primary key,
+	Tag varchar(5000),
+    Title varchar(5000) null,
+    Content longblob
+);
+
 create table FileTable (
-	PageId varchar(40),
+    FileId varchar(40) not null primary key,
+	PageId varchar(40) not null references PageTable (PageId),
 	Tag varchar(5000),
     Path varchar(5000),
     Filename varchar(1000),
@@ -17,16 +25,10 @@ create table FileTable (
 );
 
 create table LinkTable (
-	PageId varchar(40),
+	LinkId varchar(40) not null primary key,
+	PageId varchar(40) not null references PageTable (PageId),
 	Tag varchar(5000),
     Path varchar(5000)
-);
-
-create table PageTable (
-	PageId varchar(40),
-	Tag varchar(5000),
-    Title varchar(5000),
-    Content longblob
 );
 
 truncate table FileTable;

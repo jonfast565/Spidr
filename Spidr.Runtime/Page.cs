@@ -19,8 +19,7 @@ namespace Spidr.Runtime
 
         public Page()
         {
-            Processed = false;
-            PageId = Guid.NewGuid();
+            this.Processed = false;
         }
     }
 }

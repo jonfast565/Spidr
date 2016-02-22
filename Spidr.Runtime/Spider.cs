@@ -31,6 +31,9 @@ namespace Spidr.Runtime
 
         // spider tasks
         public Stack<Task<Page>> SpiderTasks { get; private set; }
+        public Task PersistenceTask { get; private set; }
+        public CancellationTokenSource PersistenceCancellationSource { get; private set; }
+        public static object VisitedLock = new object();
 
         public static List<string> ValidFileExtensions = new List<string>()
         {
@@ -44,16 +47,37 @@ namespace Spidr.Runtime
 
         private static readonly ILog log = LogManager.GetLogger(typeof(Spider));
 
+        public static string DefaultUserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
+
         public Spider(string Frontier, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
         {
             this.Frontier = Frontier;
             this.MaxAllowedPages = MaxAllowedPages;
             this.MaxAllowedTasks = MaxAllowedTasks;
-            this.UserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
+            this.UserAgent = DefaultUserAgent;
             this.OnDomainPagesOnly = OnDomainPagesOnly;
             this.Unvisited = new Dictionary<string, UrlObject>();
             this.Visited = new Dictionary<string, Page>();
             this.SpiderTasks = new Stack<Task<Page>>();
+            this.PersistenceCancellationSource = new CancellationTokenSource();
+            var ct = PersistenceCancellationSource.Token;
+            this.PersistenceTask = new Task(new Action(() =>
+            {
+                MySqlPersistence g = new MySqlPersistence();
+                while (!ct.IsCancellationRequested)
+                {
+                    lock (VisitedLock)
+                    {
+                        foreach (KeyValuePair<string, Page> page in Visited.Where(x => x.Value.Processed == false))
+                        {
+                            g.PersistData(page.Value);
+                            page.Value.Processed = true;
+                        }
+                    }
+                    Thread.Sleep(1000);
+                }
+            }), ct);
+            this.PersistenceTask.Start();
         }
 
         public void Start()
@@ -92,7 +116,10 @@ namespace Spidr.Runtime
                     if (p != null)
                     {
                         Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
-                        Visited.Add(p.Link.GetFullPath(false), p);
+                        lock (VisitedLock)
+                        {
+                            Visited.Add(p.Link.GetFullPath(false), p);
+                        }
                         Unvisited.Remove(p.Link.GetFullPath(false));
                         // .RemoveAll(x => x.AssociatedPage == p.PageId);
                         foreach (LinkTag l in p.LinkTags)
@@ -108,7 +135,10 @@ namespace Spidr.Runtime
 
                             try
                             {
-                                var key = Visited[l.Url.GetFullPath(false)];
+                                lock (VisitedLock)
+                                {
+                                    var key = Visited[l.Url.GetFullPath(false)];
+                                }
                                 visited = true;
                             }
                             catch (KeyNotFoundException /* knfe */) { }
@@ -121,16 +151,6 @@ namespace Spidr.Runtime
                         }
                     }
                     SpiderTasks.Pop();
-                }
-
-                MySqlPersistence g = new MySqlPersistence();
-                foreach (KeyValuePair<string, Page> page in Visited)
-                {
-                    if (page.Value.Processed == false)
-                    {
-                        g.PersistData(page.Value);
-                        page.Value.Processed = true;
-                    }
                 }
             }
         }
@@ -157,24 +177,16 @@ namespace Spidr.Runtime
         private Page GetPage(UrlObject address)
         {
             // web client for downloading the file
-            /*
-            WebClient Client = new WebClient();
-            */
             try
             {
                 string fullPath = address.GetFullPath(false);
-                /*
-                Client.UseDefaultCredentials = true;
-                Client.DownloadProgressChanged += Client_DownloadProgressChanged;
-                Client.Headers.Add("user-agent", this.UserAgent);
-                Client.Encoding = System.Text.Encoding.UTF8;
-                */
                 string pageContent = StringFromAddress(fullPath); // Client.DownloadString yada yada yada...
 
                 string title = GetTitle(pageContent);
-                List<LinkTag> links = GetLinks(address.AssociatedPage, fullPath, pageContent);
-                List<BinaryFile> images = GetImages(address.AssociatedPage, fullPath, pageContent);
-                List<BinaryFile> files = GetFiles(address.AssociatedPage, fullPath, pageContent);
+                var pageId = Guid.NewGuid();
+                List<LinkTag> links = GetLinks(pageId, fullPath, pageContent);
+                List<BinaryFile> images = GetImages(pageId, fullPath, pageContent);
+                List<BinaryFile> files = GetFiles(pageId, fullPath, pageContent);
 
                 return new Page()
                 {
@@ -184,7 +196,7 @@ namespace Spidr.Runtime
                     ImageTags = images,
                     LinkTags = links,
                     Link = address,
-                    PageId = address.AssociatedPage
+                    PageId = pageId
                 };
             }
             catch (Exception wex)
@@ -210,7 +222,7 @@ namespace Spidr.Runtime
             catch (Exception e)
             {
                 log.Warn("No title in document", e);
-                return "No Title";
+                return "NOTITLE";
             }
         }
 
@@ -226,7 +238,6 @@ namespace Spidr.Runtime
                 {
                     HtmlAttribute imgSrcAttribute = image.Attributes["src"];
                     UrlObject urlObject = UrlObject.FromRelativeString(address, imgSrcAttribute.Value.ToString());
-                    urlObject.AssociatedPage = pageId;
                     try
                     {
                         byte[] fileBytes = downloadClient.DownloadData(urlObject.GetFullPath(false));
@@ -235,8 +246,9 @@ namespace Spidr.Runtime
                             Url = urlObject,
                             Tag = image.OuterHtml,
                             Name = urlObject.Path.LastOrDefault(),
-                            Contents = new MemoryStream(fileBytes)
+                            Contents = new MemoryStream(fileBytes),
                         });
+                        Console.WriteLine("Found image: " + urlObject.GetFullPath(false));
                     }
                     catch (WebException wex)
                     {
@@ -265,7 +277,6 @@ namespace Spidr.Runtime
                 {
                     HtmlAttribute hrefAttribute = link.Attributes["href"];
                     UrlObject urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
-                    urlObject.AssociatedPage = pageId;
                     if (urlObject.Path.LastOrDefault() != null)
                     {
                         bool hasValidExtension = false;
@@ -289,6 +300,7 @@ namespace Spidr.Runtime
                                     Name = urlObject.Path.LastOrDefault(),
                                     Contents = new MemoryStream(fileBytes)
                                 });
+                                Console.WriteLine("Found files: " + urlObject.GetFullPath(false));
                             }
                             catch (WebException wex)
                             {
@@ -318,7 +330,6 @@ namespace Spidr.Runtime
                 {
                     HtmlAttribute hrefAttribute = Link.Attributes["href"];
                     UrlObject urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
-                    urlObject.AssociatedPage = pageId;
                     if (urlObject.Path.LastOrDefault() != null)
                     {
                         bool hasValidExtension = false;
@@ -337,6 +348,7 @@ namespace Spidr.Runtime
                                 Tag = Link.OuterHtml,
                                 Url = urlObject
                             });
+                            Console.WriteLine("Found link: " + urlObject.GetFullPath(false));
                         }
                     }
                 }
