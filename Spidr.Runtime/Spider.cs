@@ -30,7 +30,7 @@ namespace Spidr.Runtime
         public Dictionary<string, UrlObject> Unvisited { get; private set; }
 
         // spider tasks
-        public Stack<Task<Page>> SpiderTasks { get; private set; }
+        public List<Task<Page>> SpiderTasks { get; private set; }
         public Task PersistenceTask { get; private set; }
         public CancellationTokenSource PersistenceCancellationSource { get; private set; }
         public static object VisitedLock = new object();
@@ -63,7 +63,7 @@ namespace Spidr.Runtime
             this.OnDomainPagesOnly = OnDomainPagesOnly;
             this.Unvisited = new Dictionary<string, UrlObject>();
             this.Visited = new Dictionary<string, Page>();
-            this.SpiderTasks = new Stack<Task<Page>>();
+            this.SpiderTasks = new List<Task<Page>>();
             this.PersistenceCancellationSource = new CancellationTokenSource();
             var ct = PersistenceCancellationSource.Token;
             this.PersistenceTask = new Task(new Action(() =>
@@ -103,60 +103,74 @@ namespace Spidr.Runtime
                 Unvisited.Add(starter.GetFullPath(false), starter);
             }
 
+            // while still pages unprocessed
             while (Unvisited.Count() > 0
                 && Visited.Count() < MaxAllowedPages)
             {
-                for (var i = 0; i < MaxAllowedTasks - 1; i++)
+                // hard limit on number of tasks
+                var numberOfAddedTasks = MaxAllowedTasks - SpiderTasks.Count();
+                for (var i = 0; i < numberOfAddedTasks && i < Unvisited.Count(); i++)
                 {
-                    if (i < Unvisited.Count())
+                    var ctr = i;
+                    SpiderTasks.Add(Task.Factory.StartNew(() => PageFromUrl(Unvisited.ElementAt(ctr).Value)));
+                }
+
+                // chack for tasks that ran to completion and process them
+                for (var i = 0; i < SpiderTasks.Count(); i++)
+                {
+                    if (SpiderTasks[i].Status == TaskStatus.RanToCompletion)
                     {
-                        var ctr = i;
-                        SpiderTasks.Push(Task.Factory.StartNew(() => PageFromUrl(Unvisited.ElementAt(ctr).Value)));
+                        Task<Page> t = SpiderTasks[i];
+                        Page p = t.Result;
+                        ProcessNewPaths(p, starter);
                     }
                 }
 
-                for (var i = 0; i < SpiderTasks.Count(); i++)
+                // remove finished, cancelled, or faulted tasks
+                SpiderTasks.RemoveAll(x => x.Status == TaskStatus.RanToCompletion 
+                || x.Status == TaskStatus.Canceled 
+                || x.Status == TaskStatus.Faulted);
+            }
+        }
+
+        public void ProcessNewPaths(Page p, UrlObject domainObject)
+        {
+            if (p != null 
+                && domainObject != null)
+            {
+                Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
+                lock (VisitedLock)
                 {
-                    Task<Page> t = SpiderTasks.Peek();
-                    Page p = t.Result;
-                    if (p != null)
+                    Visited.Add(p.Link.GetFullPath(false), p);
+                }
+                Unvisited.Remove(p.Link.GetFullPath(false));
+                // .RemoveAll(x => x.AssociatedPage == p.PageId);
+                foreach (LinkTag l in p.LinkTags)
+                {
+                    bool toBeVisited = false;
+                    bool visited = false;
+                    try
                     {
-                        Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
+                        var key = Unvisited[l.Url.GetFullPath(false)];
+                        toBeVisited = true;
+                    }
+                    catch (KeyNotFoundException /* knfe */) { }
+
+                    try
+                    {
                         lock (VisitedLock)
                         {
-                            Visited.Add(p.Link.GetFullPath(false), p);
+                            var key = Visited[l.Url.GetFullPath(false)];
                         }
-                        Unvisited.Remove(p.Link.GetFullPath(false));
-                        // .RemoveAll(x => x.AssociatedPage == p.PageId);
-                        foreach (LinkTag l in p.LinkTags)
-                        {
-                            bool toBeVisited = false;
-                            bool visited = false;
-                            try
-                            {
-                                var key = Unvisited[l.Url.GetFullPath(false)];
-                                toBeVisited = true;
-                            }
-                            catch (KeyNotFoundException /* knfe */) { }
-
-                            try
-                            {
-                                lock (VisitedLock)
-                                {
-                                    var key = Visited[l.Url.GetFullPath(false)];
-                                }
-                                visited = true;
-                            }
-                            catch (KeyNotFoundException /* knfe */) { }
-
-                            if (toBeVisited != true && visited != true)
-                            {
-                                if (l.Url.GetDomain() == starter.GetDomain())
-                                    Unvisited.Add(l.Url.GetFullPath(false), l.Url);
-                            }
-                        }
+                        visited = true;
                     }
-                    SpiderTasks.Pop();
+                    catch (KeyNotFoundException /* knfe */) { }
+
+                    if (toBeVisited != true && visited != true)
+                    {
+                        if (l.Url.GetDomain() == domainObject.GetDomain())
+                            Unvisited.Add(l.Url.GetFullPath(false), l.Url);
+                    }
                 }
             }
         }
