@@ -96,20 +96,14 @@ namespace Spidr.Runtime
             }
         }
 
-        public static bool operator !=(UrlObject o1, UrlObject o2)
-        {
-            return o1.GetFullPath(false) != o2.GetFullPath(false);
-        }
-
-        public static bool operator ==(UrlObject o1, UrlObject o2)
-        {
-            return o1.GetFullPath(false) == o2.GetFullPath(false);
-        }
-
         public override bool Equals(Object o1)
         {
-            UrlObject o1obj = (UrlObject)o1;
-            return o1obj.GetFullPath(false) == this.GetFullPath(false);
+            if (o1 != null)
+            {
+                UrlObject o1obj = (UrlObject)o1;
+                return o1obj.GetFullPath(false) == this.GetFullPath(false);
+            }
+            else return false;
         }
 
         public override int GetHashCode()

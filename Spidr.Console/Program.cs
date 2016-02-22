@@ -17,12 +17,12 @@ namespace Spidr.Console
             log4net.Config.XmlConfigurator.Configure();
             System.Console.WriteLine("Address to process: ");
             string address = System.Console.ReadLine();
-            Task.Factory.StartNew(() =>
-            {
-                Spider s = new Spider(address, 1000, true, 50);
+            // Task.Factory.StartNew(() =>
+            //{
+                Spider s = new Spider(address, SpiderJobType.PING_ONLY, 1000, true, 50);
                 s.Start();
-            });
-            while (System.Console.ReadKey().Key != ConsoleKey.Escape) { }
+            //});
+            // while (System.Console.ReadKey().Key != ConsoleKey.Escape) { }
             System.Console.WriteLine("Done!");
 #if DEBUG
             Thread.Sleep(1000);

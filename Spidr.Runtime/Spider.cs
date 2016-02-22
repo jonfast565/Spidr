@@ -16,6 +16,13 @@ using System.Net.Security;
 
 namespace Spidr.Runtime
 {
+    public enum SpiderJobType
+    {
+        FULL,
+        PAGE_ONLY,
+        PING_ONLY
+    }
+
     public class Spider
     {
         // instance fields
@@ -33,6 +40,7 @@ namespace Spidr.Runtime
         public List<Task<Page>> SpiderTasks { get; private set; }
         public Task PersistenceTask { get; private set; }
         public CancellationTokenSource PersistenceCancellationSource { get; private set; }
+        public SpiderJobType JobType { get; private set; }
         public static object VisitedLock = new object();
 
         public static List<string> ValidFileExtensions = new List<string>()
@@ -54,36 +62,44 @@ namespace Spidr.Runtime
 
         public static string DefaultUserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
 
-        public Spider(string Frontier, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
+        public Spider(string Frontier, SpiderJobType JobType, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
         {
             this.Frontier = Frontier;
             this.MaxAllowedPages = MaxAllowedPages;
             this.MaxAllowedTasks = MaxAllowedTasks;
             this.UserAgent = DefaultUserAgent;
+            this.JobType = JobType;
             this.OnDomainPagesOnly = OnDomainPagesOnly;
             this.Unvisited = new Dictionary<string, UrlObject>();
             this.Visited = new Dictionary<string, Page>();
             this.SpiderTasks = new List<Task<Page>>();
             this.PersistenceCancellationSource = new CancellationTokenSource();
             var ct = PersistenceCancellationSource.Token;
-            this.PersistenceTask = new Task(new Action(() =>
+            if (!(this.JobType == SpiderJobType.PING_ONLY))
             {
-                MySqlPersistence g = new MySqlPersistence();
-                while (!ct.IsCancellationRequested)
+                this.PersistenceTask = new Task(new Action(() =>
                 {
-                    lock (VisitedLock)
+                    MySqlPersistence g = new MySqlPersistence();
+                    while (!ct.IsCancellationRequested)
                     {
-                        var unprocessed = Visited.Where(x => x.Value.Processed == false);
-                        foreach (KeyValuePair<string, Page> page in unprocessed)
+                        lock (VisitedLock)
                         {
-                            g.PersistData(page.Value);
-                            page.Value.Processed = true;
+                            var unprocessed = Visited.Where(x => x.Value.Processed == false);
+                            foreach (KeyValuePair<string, Page> page in unprocessed)
+                            {
+                                if (this.JobType == SpiderJobType.PAGE_ONLY)
+                                {
+                                    page.Value.LinkTags = new List<LinkTag>();
+                                }
+                                g.PersistData(page.Value);
+                                page.Value.Processed = true;
+                            }
                         }
+                        Thread.Sleep(1000);
                     }
-                    Thread.Sleep(1000);
-                }
-            }), ct);
-            this.PersistenceTask.Start();
+                }), ct);
+                this.PersistenceTask.Start();
+            }
         }
 
         public void Start()
@@ -109,10 +125,19 @@ namespace Spidr.Runtime
             {
                 // hard limit on number of tasks
                 var numberOfAddedTasks = MaxAllowedTasks - SpiderTasks.Count();
-                for (var i = 0; i < numberOfAddedTasks && i < Unvisited.Count(); i++)
+                for (var i = 0; i < numberOfAddedTasks; i++)
                 {
-                    var ctr = i;
-                    SpiderTasks.Add(Task.Factory.StartNew(() => PageFromUrl(Unvisited.ElementAt(ctr).Value)));
+                    if (i < Unvisited.Count())
+                    {
+                        var ctr = i;
+                        SpiderTasks.Add(Task.Factory.StartNew(() => {
+                            try
+                            {
+                                return PageFromUrl(Unvisited.ElementAt(ctr).Value);
+                            }
+                            catch (ArgumentOutOfRangeException) { return null; };
+                        }));
+                    }
                 }
 
                 // chack for tasks that ran to completion and process them
@@ -127,24 +152,24 @@ namespace Spidr.Runtime
                 }
 
                 // remove finished, cancelled, or faulted tasks
-                SpiderTasks.RemoveAll(x => x.Status == TaskStatus.RanToCompletion 
-                || x.Status == TaskStatus.Canceled 
+                SpiderTasks.RemoveAll(x => x.Status == TaskStatus.RanToCompletion
+                || x.Status == TaskStatus.Canceled
                 || x.Status == TaskStatus.Faulted);
             }
         }
 
         public void ProcessNewPaths(Page p, UrlObject domainObject)
         {
-            if (p != null 
+            if (p != null
                 && domainObject != null)
             {
                 Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
+                Unvisited.Remove(p.Link.GetFullPath(false));
                 lock (VisitedLock)
                 {
                     Visited.Add(p.Link.GetFullPath(false), p);
                 }
-                Unvisited.Remove(p.Link.GetFullPath(false));
-                // .RemoveAll(x => x.AssociatedPage == p.PageId);
+
                 foreach (LinkTag l in p.LinkTags)
                 {
                     bool toBeVisited = false;
@@ -166,7 +191,8 @@ namespace Spidr.Runtime
                     }
                     catch (KeyNotFoundException /* knfe */) { }
 
-                    if (toBeVisited != true && visited != true)
+                    if (toBeVisited != true 
+                        & visited != true)
                     {
                         if (l.Url.GetDomain() == domainObject.GetDomain())
                             Unvisited.Add(l.Url.GetFullPath(false), l.Url);
@@ -178,7 +204,7 @@ namespace Spidr.Runtime
         public string StringFromAddress(string address)
         {
             string content = null;
-            var request = (HttpWebRequest) WebRequest.Create(address);
+            var request = (HttpWebRequest)WebRequest.Create(address);
             request.Timeout = 10000;
             request.AllowAutoRedirect = true;
             var response = (HttpWebResponse)request.GetResponse();
@@ -204,9 +230,31 @@ namespace Spidr.Runtime
 
                 string title = GetTitle(pageContent);
                 var pageId = Guid.NewGuid();
-                List<LinkTag> links = GetLinks(pageId, fullPath, pageContent);
-                List<BinaryFile> images = GetImages(pageId, fullPath, pageContent);
-                List<BinaryFile> files = GetFiles(pageId, fullPath, pageContent);
+
+                List<LinkTag> links = null;
+                links = GetLinks(pageId, fullPath, pageContent);
+
+                List<BinaryFile> images = null;
+                if (this.JobType == SpiderJobType.PAGE_ONLY 
+                    || this.JobType == SpiderJobType.PING_ONLY)
+                {
+                    images = new List<BinaryFile>();
+                }
+                else
+                {
+                    images = GetImages(pageId, fullPath, pageContent);
+                }
+
+                List<BinaryFile> files = null;
+                if (this.JobType == SpiderJobType.PAGE_ONLY 
+                    || this.JobType == SpiderJobType.PING_ONLY)
+                {
+                    files = new List<BinaryFile>();
+                }
+                else
+                {
+                    files = GetFiles(pageId, fullPath, pageContent);
+                }
 
                 return new Page()
                 {
