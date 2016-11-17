@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -33,15 +34,15 @@ namespace Spidr.Runtime
         public bool OnDomainPagesOnly { get; private set; }
 
         // spider drivers
-        public Dictionary<string, Page> Visited { get; private set; }
-        public Dictionary<string, UrlObject> Unvisited { get; private set; }
+        public IDictionary<string, Page> Visited { get; private set; }
+        public IDictionary<string, UrlObject> Unvisited { get; private set; }
 
         // spider tasks
         public List<Task<Page>> SpiderTasks { get; private set; }
         public Task PersistenceTask { get; private set; }
         public CancellationTokenSource PersistenceCancellationSource { get; private set; }
         public SpiderJobType JobType { get; private set; }
-        public static object VisitedLock = new object();
+        public IPersistenceInserter PersistenceInserter { get; private set; }
 
         public static List<string> ValidFileExtensions = new List<string>()
         {
@@ -62,7 +63,7 @@ namespace Spidr.Runtime
 
         public static string DefaultUserAgent = "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)";
 
-        public Spider(string Frontier, SpiderJobType JobType, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
+        public Spider(string Frontier, SpiderJobType JobType, IPersistenceInserter persistenceInserter, int MaxAllowedPages = 1000, bool OnDomainPagesOnly = true, int MaxAllowedTasks = 3)
         {
             this.Frontier = Frontier;
             this.MaxAllowedPages = MaxAllowedPages;
@@ -70,110 +71,76 @@ namespace Spidr.Runtime
             this.UserAgent = DefaultUserAgent;
             this.JobType = JobType;
             this.OnDomainPagesOnly = OnDomainPagesOnly;
-            this.Unvisited = new Dictionary<string, UrlObject>();
-            this.Visited = new Dictionary<string, Page>();
+            this.Unvisited = new ConcurrentDictionary<string, UrlObject>();
+            this.Visited = new ConcurrentDictionary<string, Page>();
             this.SpiderTasks = new List<Task<Page>>();
             this.PersistenceCancellationSource = new CancellationTokenSource();
+            this.PersistenceInserter = persistenceInserter;
             var ct = PersistenceCancellationSource.Token;
-            if (!(this.JobType == SpiderJobType.PING_ONLY))
-            {
-                this.PersistenceTask = new Task(new Action(() =>
-                {
-                    MySqlPersistence g = new MySqlPersistence();
-                    while (!ct.IsCancellationRequested)
-                    {
-                        lock (VisitedLock)
-                        {
-                            var unprocessed = Visited.Where(x => x.Value.Processed == false);
-                            foreach (KeyValuePair<string, Page> page in unprocessed)
-                            {
-                                if (this.JobType == SpiderJobType.PAGE_ONLY)
-                                {
-                                    page.Value.LinkTags = new List<LinkTag>();
-                                }
-                                g.PersistData(page.Value);
-                                page.Value.Processed = true;
-                            }
-                        }
-                        Thread.Sleep(1000);
-                    }
-                }), ct);
-                this.PersistenceTask.Start();
-            }
         }
 
         public void Start()
         {
             // ignore ssl errors
-            ServicePointManager.ServerCertificateValidationCallback = delegate (
-            Object obj, X509Certificate certificate, X509Chain chain,
-            SslPolicyErrors errors)
-            {
-                return (true);
-            };
+            ServicePointManager.ServerCertificateValidationCallback = (obj, certificate, chain, errors) => (true);
 
             // start
-            UrlObject starter = UrlObject.FromString(Frontier);
-            if (Unvisited.Count() == 0)
+            var starter = UrlObject.FromString(Frontier);
+            if (!Unvisited.Any())
             {
                 Unvisited.Add(starter.GetFullPath(false), starter);
             }
 
             // while still pages unprocessed
-            while (Unvisited.Count() > 0
-                && Visited.Count() < MaxAllowedPages)
+            while (Unvisited.Any() && Visited.Count < MaxAllowedPages)
             {
-                // hard limit on number of tasks
-                var numberOfAddedTasks = MaxAllowedTasks - SpiderTasks.Count();
-                for (var i = 0; i < numberOfAddedTasks; i++)
+                Parallel.ForEach(Unvisited, (urlPair) =>
                 {
-                    if (i < Unvisited.Count())
+                    try
                     {
-                        var ctr = i;
-                        SpiderTasks.Add(Task.Factory.StartNew(() => {
-                            try
+                        try
+                        {
+                            var p = PageFromUrl(urlPair.Value);
+                            ProcessNewPaths(p, urlPair.Value);
+                        }
+                        catch (ArgumentOutOfRangeException) { }
+
+                        var unprocessed = Visited.Where(x => x.Value.Processed == false);
+                        foreach (var page in unprocessed)
+                        {
+                            if (this.JobType == SpiderJobType.PAGE_ONLY)
                             {
-                                return PageFromUrl(Unvisited.ElementAt(ctr).Value);
+                                page.Value.LinkTags = new List<LinkTag>();
                             }
-                            catch (ArgumentOutOfRangeException) { return null; };
-                        }));
+                            PersistenceInserter.PersistData(page.Value);
+                            page.Value.Processed = true;
+                        }
                     }
-                }
-
-                // chack for tasks that ran to completion and process them
-                for (var i = 0; i < SpiderTasks.Count(); i++)
-                {
-                    if (SpiderTasks[i].Status == TaskStatus.RanToCompletion)
+                    catch (ArgumentException) { }
+                    catch (Exception e)
                     {
-                        Task<Page> t = SpiderTasks[i];
-                        Page p = t.Result;
-                        ProcessNewPaths(p, starter);
+                        Console.WriteLine(e);
                     }
-                }
-
-                // remove finished, cancelled, or faulted tasks
-                SpiderTasks.RemoveAll(x => x.Status == TaskStatus.RanToCompletion
-                || x.Status == TaskStatus.Canceled
-                || x.Status == TaskStatus.Faulted);
+                });
             }
         }
 
         public void ProcessNewPaths(Page p, UrlObject domainObject)
         {
-            if (p != null
-                && domainObject != null)
+            if (p != null && domainObject != null)
             {
                 Console.WriteLine("Visited: " + p.Link.GetFullPath(false));
+
                 Unvisited.Remove(p.Link.GetFullPath(false));
-                lock (VisitedLock)
+                if (!Visited.ContainsKey(p.Link.GetFullPath(false)))
                 {
                     Visited.Add(p.Link.GetFullPath(false), p);
                 }
 
                 foreach (LinkTag l in p.LinkTags)
                 {
-                    bool toBeVisited = false;
-                    bool visited = false;
+                    var toBeVisited = false;
+                    var visited = false;
                     try
                     {
                         var key = Unvisited[l.Url.GetFullPath(false)];
@@ -183,15 +150,12 @@ namespace Spidr.Runtime
 
                     try
                     {
-                        lock (VisitedLock)
-                        {
-                            var key = Visited[l.Url.GetFullPath(false)];
-                        }
+                        var key = Visited[l.Url.GetFullPath(false)];
                         visited = true;
                     }
                     catch (KeyNotFoundException /* knfe */) { }
 
-                    if (toBeVisited != true 
+                    if (toBeVisited != true
                         & visited != true)
                     {
                         if (l.Url.GetDomain() == domainObject.GetDomain())
@@ -235,7 +199,7 @@ namespace Spidr.Runtime
                 links = GetLinks(pageId, fullPath, pageContent);
 
                 List<BinaryFile> images = null;
-                if (this.JobType == SpiderJobType.PAGE_ONLY 
+                if (this.JobType == SpiderJobType.PAGE_ONLY
                     || this.JobType == SpiderJobType.PING_ONLY)
                 {
                     images = new List<BinaryFile>();
@@ -246,7 +210,7 @@ namespace Spidr.Runtime
                 }
 
                 List<BinaryFile> files = null;
-                if (this.JobType == SpiderJobType.PAGE_ONLY 
+                if (this.JobType == SpiderJobType.PAGE_ONLY
                     || this.JobType == SpiderJobType.PING_ONLY)
                 {
                     files = new List<BinaryFile>();
@@ -256,7 +220,7 @@ namespace Spidr.Runtime
                     files = GetFiles(pageId, fullPath, pageContent);
                 }
 
-                return new Page()
+                return new Page
                 {
                     Content = pageContent,
                     Name = title,
@@ -311,7 +275,8 @@ namespace Spidr.Runtime
                         bool hasValidExtension = false;
                         foreach (var extension in ValidImgExtensions)
                         {
-                            if (urlObject.Path.LastOrDefault().Contains("." + extension))
+                            var lastOrDefault = urlObject.Path.LastOrDefault();
+                            if (lastOrDefault != null && lastOrDefault.Contains("." + extension))
                             {
                                 hasValidExtension = true;
                             }
@@ -356,16 +321,17 @@ namespace Spidr.Runtime
             try
             {
                 //get all of the hrefs on the page
-                foreach (HtmlNode link in document.DocumentNode.SelectNodes("//a[@href]"))
+                foreach (var link in document.DocumentNode.SelectNodes("//a[@href]"))
                 {
-                    HtmlAttribute hrefAttribute = link.Attributes["href"];
-                    UrlObject urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
+                    var hrefAttribute = link.Attributes["href"];
+                    var urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
                     if (urlObject.Path.LastOrDefault() != null)
                     {
                         bool hasValidExtension = false;
                         foreach (var extension in ValidFileExtensions)
                         {
-                            if (urlObject.Path.LastOrDefault().Contains("." + extension))
+                            var lastOrDefault = urlObject.Path.LastOrDefault();
+                            if (lastOrDefault != null && lastOrDefault.Contains("." + extension))
                             {
                                 hasValidExtension = true;
                             }
@@ -403,37 +369,34 @@ namespace Spidr.Runtime
         private List<LinkTag> GetLinks(Guid pageId, string address, string content)
         {
             //attempt to parse the document
-            HtmlDocument Document = new HtmlDocument();
-            Document.LoadHtml(content);
-            List<LinkTag> tags = new List<LinkTag>();
+            var document = new HtmlDocument();
+            document.LoadHtml(content);
+            var tags = new List<LinkTag>();
             try
             {
                 //get all of the hrefs on the page
-                foreach (HtmlNode Link in Document.DocumentNode.SelectNodes("//a[@href]"))
+                foreach (var link in document.DocumentNode.SelectNodes("//a[@href]"))
                 {
-                    HtmlAttribute hrefAttribute = Link.Attributes["href"];
-                    UrlObject urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
-                    if (urlObject.Path.LastOrDefault() != null)
+                    var hrefAttribute = link.Attributes["href"];
+                    var urlObject = UrlObject.FromRelativeString(address, hrefAttribute.Value.ToString());
+                    if (urlObject.Path.LastOrDefault() == null) continue;
+                    var hasValidExtension = false;
+                    foreach (var extension in ValidFileExtensions)
                     {
-                        bool hasValidExtension = false;
-                        foreach (var extension in ValidFileExtensions)
+                        var lastOrDefault = urlObject.Path.LastOrDefault();
+                        if (lastOrDefault != null && lastOrDefault.Contains("." + extension))
                         {
-                            if (urlObject.Path.LastOrDefault().Contains("." + extension))
-                            {
-                                hasValidExtension = true;
-                            }
-                        }
-
-                        if (!hasValidExtension)
-                        {
-                            tags.Add(new LinkTag(pageId)
-                            {
-                                Tag = Link.OuterHtml,
-                                Url = urlObject
-                            });
-                            Console.WriteLine("Found link: " + urlObject.GetFullPath(false));
+                            hasValidExtension = true;
                         }
                     }
+
+                    if (hasValidExtension) continue;
+                    tags.Add(new LinkTag(pageId)
+                    {
+                        Tag = link.OuterHtml,
+                        Url = urlObject
+                    });
+                    Console.WriteLine("Found link: " + urlObject.GetFullPath(false));
                 }
             }
             catch (Exception e)

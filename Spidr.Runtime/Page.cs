@@ -16,10 +16,11 @@ namespace Spidr.Runtime
         public List<BinaryFile> ImageTags { get; set; }
         public List<BinaryFile> FileTags { get; set; }
         public bool Processed { get; set; }
-
+        public DateTime AggregateDateTime { get; set; }
         public Page()
         {
             this.Processed = false;
+            this.AggregateDateTime = DateTime.Now;
         }
     }
 }

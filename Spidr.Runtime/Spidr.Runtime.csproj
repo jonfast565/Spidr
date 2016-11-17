@@ -73,9 +73,10 @@
     <Compile Include="BinaryFile.cs" />
     <Compile Include="HtmlTag.cs" />
     <Compile Include="LinkTag.cs" />
+    <Compile Include="MongoDbPersistence.cs" />
     <Compile Include="Page.cs" />
     <Compile Include="MySqlPersistence.cs" />
-    <Compile Include="PersistenceInserter.cs" />
+    <Compile Include="IPersistenceInserter.cs" />
     <Compile Include="Spider.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="UrlObject.cs" />

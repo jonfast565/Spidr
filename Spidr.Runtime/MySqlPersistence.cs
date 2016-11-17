@@ -10,14 +10,14 @@ using log4net;
 
 namespace Spidr.Runtime
 {
-    public class MySqlPersistence : PersistenceInserter
+    public class MySqlPersistence : IPersistenceInserter
     {
         private static ILog log = LogManager.GetLogger(typeof(MySqlPersistence));
         private MySqlConnection client;
 
         public MySqlPersistence()
         {
-            client = new MySqlConnection("Server=localhost;Port=6000;Database=webdb;Uid=root;Pwd=none;");
+            client = new MySqlConnection("Server=localhost;Port=3306;Database=webdb;Uid=root;Pwd=istanbul565$!;");
             client.Open();
         }
 

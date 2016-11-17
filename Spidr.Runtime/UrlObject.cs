@@ -50,9 +50,23 @@ namespace Spidr.Runtime
             QueryParams = new Dictionary<string, string>();
         }
 
-        public string GetDomain()
+        public string GetDomain(bool includeSubdomain = true)
         {
-            string result = (DomainName != null ? DomainName : string.Empty);
+            string result = string.Empty;
+
+            if (includeSubdomain)
+            {
+                if (DomainPrefix != null)
+                {
+                    foreach (var prefix in DomainPrefix)
+                    {
+                        result += prefix + ".";
+                    }
+                }
+            }
+
+            result += (DomainName != null ? DomainName : string.Empty);
+
             if (DomainSuffix != null)
             {
                 foreach (var suffix in DomainSuffix)
