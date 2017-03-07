@@ -17,7 +17,7 @@ namespace Spidr.Console
             log4net.Config.XmlConfigurator.Configure();
             System.Console.WriteLine("Address to process: ");
             string address = System.Console.ReadLine();
-            Spider s = new Spider(address, SpiderJobType.PAGE_ONLY, new MySqlPersistence(), 1000, true, 50);
+            Spider s = new Spider(address, SpiderJobType.FULL, new MySqlPersistence(), 1000, true, 50);
             s.Start();
             System.Console.WriteLine("Done!");
 #if DEBUG
